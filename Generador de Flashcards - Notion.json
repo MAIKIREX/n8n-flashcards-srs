@@ -1,0 +1,616 @@
+{
+  "name": "Generador de Flashcards - Notion",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1264,
+        -64
+      ],
+      "id": "cff8538d-13da-4000-bea4-81fa5613db2a",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me",
+      "typeVersion": 1,
+      "position": [
+        1184,
+        -64
+      ],
+      "id": "2cdc6b86-7033-4d70-ba76-e125965f0fcb"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -592,
+        -144
+      ],
+      "id": "77b5ed24-dd39-4cb5-bc31-9a8049cf2348",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bdb9c2db-73a1-4e04-8354-68d6e17a1bca",
+              "name": "noteTitle",
+              "value": "={{ $json.noteTitle }}",
+              "type": "string"
+            },
+            {
+              "id": "74bff84d-4c7f-4403-81b3-7480bc00c033",
+              "name": "type",
+              "value": "={{ $json.type }}",
+              "type": "string"
+            },
+            {
+              "id": "3b31f68e-fcdb-4ad7-8e8a-5d40062f42de",
+              "name": "noteId",
+              "value": "={{ $json.noteId }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -48,
+        176
+      ],
+      "id": "7bd114c8-211e-4acc-a98b-82f2824d7d31",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        288,
+        -144
+      ],
+      "id": "dc250fcf-0cfe-4813-8257-397dd3c93b90",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 0) EXTRAER EL TEXTO DEL LLM DESDE VARIAS FORMAS (incl. Gemini)\nlet txt = '';\n\n// a) Caso Gemini (tu salida): array con content.parts[0].text\nif (Array.isArray($json) && $json[0]?.content?.parts?.[0]?.text) {\n  txt = $json[0].content.parts[0].text;\n\n// b) Caso Gemini pero no-array\n} else if ($json.content?.parts?.[0]?.text) {\n  txt = $json.content.parts[0].text;\n\n// c) Otros nodos (OpenAI, etc.)\n} else {\n  const raw = $json.data ?? $json.result ?? $json.text ?? $json.reply ?? $json;\n  if (typeof raw === 'string') {\n    txt = raw;\n  } else if (raw && typeof raw === 'object') {\n    txt = JSON.stringify(raw);\n  }\n}\n\nif (!txt || typeof txt !== 'string') {\n  throw new Error('No se recibió texto del LLM.');\n}\n\n// 1) ELIMINAR FENCES ```json ... ```\ntxt = txt.trim();\nif (txt.startsWith('```')) {\n  // elimina ```json\\n y el cierre final ```\n  txt = txt.replace(/^```[a-zA-Z]*\\n?/, '').replace(/```$/, '').trim();\n}\n\n// 2) LOCALIZAR EL OBJETO JSON PRINCIPAL DENTRO DEL TEXTO\nconst start = txt.indexOf('{');\nconst end   = txt.lastIndexOf('}');\nif (start === -1 || end === -1 || end <= start) {\n  throw new Error('Respuesta no parece JSON.');\n}\n\nlet data;\ntry {\n  data = JSON.parse(txt.slice(start, end + 1));\n} catch (e) {\n  throw new Error('JSON inválido del LLM: ' + e.message);\n}\n\n// 3) TOLERANCIA: por si el modelo devolviera un array raíz\nif (Array.isArray(data)) data = { cards: data };\n\n// 4) VALIDACIÓN\nif (!data.cards || !Array.isArray(data.cards) || data.cards.length === 0) {\n  throw new Error('No hay tarjetas en \"cards[]\".');\n}\n\n// 5) CONTEXTO (de la nota)\nconst noteId    = $json.noteId ?? $json.id ?? null;\nconst noteTitle = $json.noteTitle ?? $json.Name ?? null;\nconst fallbackType = ($json.type ?? $json.Type ?? '').toString();\n\n// 6) NORMALIZACIÓN + DEDUP POR 'front'\nconst out = [];\nconst seen = new Set();\n\nfor (const c of data.cards) {\n  const front = (c.front ?? '').toString().trim();\n  const back  = (c.back  ?? '').toString().trim();\n\n  // OJO: NO MEZCLAR ?? con || en la misma expresión sin paréntesis.\n  const rawType = (c.type ?? fallbackType ?? '').toString().trim();\n  const type    = rawType || 'Vocabulary';\n\n  if (!front || !back) continue;\n  if (seen.has(front)) continue;\n  seen.add(front);\n\n  const difficulty = Number.isFinite(c.difficulty) ? c.difficulty : 2;\n  const tags = Array.isArray(c.tags) ? c.tags : [];\n\n  out.push({\n    json: { front, back, type, tags, difficulty, noteId, noteTitle }\n  });\n}\n\nif (out.length === 0) {\n  throw new Error('Tras normalizar, no quedaron tarjetas válidas.');\n}\n\nreturn out; // Emite N items, uno por tarjeta\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        -144
+      ],
+      "id": "893efc68-df3b-4c1e-a630-7efe927a42d3",
+      "name": "Parse & Normalize1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// La Paz (America/La_Paz) = UTC-4 (sin DST)\nconst TZ_OFFSET_MIN = 4 * 60;\n\n// Convierte una hora local (La Paz) a ISO UTC para Notion\nfunction isoAtLaPaz(hour = 21, minute = 30, addDays = 1) {\n  const nowUtc = new Date();\n  const nowLaPaz = new Date(nowUtc.getTime() - TZ_OFFSET_MIN * 60_000);\n  const targetLaPaz = new Date(\n    nowLaPaz.getFullYear(),\n    nowLaPaz.getMonth(),\n    nowLaPaz.getDate() + addDays,\n    hour, minute, 0, 0\n  );\n  const targetUtc = new Date(targetLaPaz.getTime() + TZ_OFFSET_MIN * 60_000);\n  return targetUtc.toISOString();\n}\n\nconst items = $input.all();\nreturn items.map((i) => ({\n  json: {\n    ...i.json,              // <- aquí va el spread correcto\n    Stage: 0,\n    NextReview: isoAtLaPaz(21, 30, 1),\n  },\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -144
+      ],
+      "id": "d762f072-e846-4f0d-b5d8-5cd8d76bb947",
+      "name": "añadir Stage y NextReview1"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_FLASHCARDS_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "YOUR_FLASHCARDS_DATABASE_ID",
+          "cachedResultUrl": ""
+        },
+        "title": "={{ $json.noteTitle }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Front|title",
+              "title": "={{ $json.front }}"
+            },
+            {
+              "key": "Back|rich_text",
+              "textContent": "={{ $json.back }}"
+            },
+            {
+              "key": "Type|select",
+              "selectValue": "={{ $json.type }}"
+            },
+            {
+              "key": "Stage|number",
+              "numberValue": "={{ $json.Stage }}"
+            },
+            {
+              "key": "Next Review Date|date",
+              "date": "={{ $json.NextReview }}",
+              "timezone": "America/La_Paz"
+            },
+            {
+              "key": "Tags|multi_select",
+              "multiSelectValue": "={{ $json.tags }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        944,
+        -144
+      ],
+      "id": "c3db1a17-2712-4173-b98c-6dff31e08458",
+      "name": "Create a database page1"
+    },
+    {
+      "parameters": {
+        "content": "## Revisar si hay apuntes nuebos en Notion\n",
+        "height": 288,
+        "width": 400
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1728,
+        -160
+      ],
+      "typeVersion": 1,
+      "id": "858788e2-1bc2-4b29-9a94-670545fcd369",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## adquiriendo los apuntes Nuevos",
+        "height": 496,
+        "width": 640,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1088,
+        -304
+      ],
+      "typeVersion": 1,
+      "id": "be4bf336-7047-4644-a656-93b84319f06d",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## Generando las Flashcards para cada seccion Grammar y Vocabulary",
+        "height": 592,
+        "width": 608,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -416,
+        -272
+      ],
+      "typeVersion": 1,
+      "id": "b8d190b2-f6d3-4cc5-8c96-4e3453256911",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Colapsa bloques de Notion -> UN item { contentText }, filtrando \"código colado\".\n// Soporta entrada: muchos items (uno por bloque) o un item con array en json.\n\nfunction norm(s) { return (s ?? '').toString().trim(); }\n\n// Heurística para detectar contenido \"tipo código\" aunque sea paragraph\nfunction looksCodey(s) {\n  if (!s) return false;\n  // comenta/JS/common tokens; ajusta si lo necesitas\n  const patterns = [\n    /^\\/\\//,              // // comentario\n    /(^|\\s)(const|let|var)\\s+/,\n    /\\bfunction\\b/,\n    /\\breturn\\b\\s*\\[/,\n    /\\breturn\\b\\s*\\{/,\n    /[{}`;]/,\n    /\\bcode:\\s*\\{/,       // estructuras de bloque code\n  ];\n  return patterns.some(rx => rx.test(s));\n}\n\nfunction mdLineFor(block) {\n  const type = block.type;\n  const content = norm(block.content);\n  if (!content) return '';\n\n  // salta si parece código metido como párrafo\n  if (type === 'paragraph' && looksCodey(content)) return '';\n\n  // Acepta sólo estos tipos\n  const allowed = new Set([\n    'heading_1','heading_2','heading_3',\n    'bulleted_list_item','numbered_list_item','paragraph'\n  ]);\n  if (!allowed.has(type)) return '';\n\n  if (type === 'heading_1') return `# ${content}`;\n  if (type === 'heading_2') return `## ${content}`;\n  if (type === 'heading_3') return `### ${content}`;\n  if (type === 'bulleted_list_item') return `- ${content}`;\n  if (type === 'numbered_list_item') return `1. ${content}`;\n  return content; // paragraph\n}\n\n// 1) Normaliza origen: muchos items vs 1 item con array\nconst all = $input.all();\nlet blocks = [];\nif (all.length === 1 && Array.isArray(all[0].json)) {\n  blocks = all[0].json;\n} else {\n  blocks = all.map(i => i.json);\n}\n\n// 2) Convierte → líneas Markdown, filtrando vacíos/duplicados consecutivos\nconst lines = [];\nfor (const b of blocks) {\n  const line = mdLineFor(b);\n  if (!line) continue;\n  if (lines.length === 0 || lines[lines.length - 1] !== line) {\n    lines.push(line);\n  }\n}\n\n// 3) Limpieza: colapsa múltiples líneas en blanco (por si acaso)\nconst text = lines.join('\\n')\n  .replace(/\\n{3,}/g, '\\n\\n')   // no más de dos saltos seguidos\n  .slice(0, 8000);\n\n// 4) Devuelve un solo item\nreturn [{ json: { contentText: text } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        -64
+      ],
+      "id": "9ed27d79-b1f3-458a-9ff3-b7361b34d9ba",
+      "name": "Aplanar bloques de Notion"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9bfb3d1b-1611-48e4-b3ff-c7b71ddf3483",
+              "name": "noteId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "93b14421-dddd-47c6-9c26-438082787404",
+              "name": "noteTitle",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "f3e53b57-e60e-4841-8907-27dd39835c75",
+              "name": "type",
+              "value": "={{ $json.property_type }}",
+              "type": "string"
+            },
+            {
+              "id": "fb037596-f2d0-42b0-9cf2-f3fc1df22534",
+              "name": "contentText",
+              "value": "={{ $json.contentText }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -384,
+        -144
+      ],
+      "id": "a231ff6d-d4ac-42b4-9ab9-5606dfb713be",
+      "name": "Campos base"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $json.noteId }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Processed|checkbox",
+              "checkboxValue": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        928,
+        -304
+      ],
+      "id": "1ebef442-319e-4996-8f69-c0bff51fd65a",
+      "name": "Update a database page"
+    },
+    {
+      "parameters": {
+        "content": "## Actualizando la base de datos Flashcard \n**Double click** to edit me. [Guide](https://docs.n8n.io/workflows/sticky-notes/)",
+        "height": 608,
+        "width": 1088
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        256,
+        -336
+      ],
+      "typeVersion": 1,
+      "id": "20ce58ce-11fb-4cd9-a2e3-c11be5115aaf",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTES_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "YOUR_NOTES_DATABASE_ID",
+          "cachedResultUrl": ""
+        },
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "key": "Ready for AI|checkbox",
+              "condition": "equals",
+              "checkboxValue": true
+            },
+            {
+              "key": "Processed|checkbox",
+              "condition": "does_not_equal",
+              "checkboxValue": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -1488,
+        -64
+      ],
+      "id": "3e9a98fd-7002-4b57-84f7-20839475384f",
+      "name": "Obtener notas elegibles"
+    },
+    {
+      "parameters": {
+        "resource": "block",
+        "operation": "getAll",
+        "blockId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "returnAll": true,
+        "fetchNestedBlocks": true
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -1008,
+        -48
+      ],
+      "id": "eb8a9099-b121-4923-935b-6db024cb04b1",
+      "name": "Obtener contenido de notas"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You generate concise, high-quality ESL flashcards for Spanish-speaking learners.\nOutput ONLY strict JSON (no Markdown fences, no prose, no code blocks).\nNEVER wrap the JSON in ``` fences.\nSchema:\n{\n  \"cards\": [\n    {\"front\": \"...\", \"back\": \"...\", \"type\": \"Grammar|Vocabulary\", \"tags\": [\"...\"], \"difficulty\": 2}\n  ]\n}\nRules:\n- \"cards\" MUST be a non-empty array.\n- Each object MUST include: front (string), back (string), type (exactly \"Grammar\" or \"Vocabulary\"), tags (array), difficulty (integer).\n- Avoid duplicate \"front\".\n- Use clear, compact language; no HTML; escape quotes if needed.\n- Difficulty: use 2 by default (1=easy, 2=medium, 3=hard).\n- Do NOT add commentary outside JSON. Only return the JSON object described.",
+              "role": "model"
+            },
+            {
+              "content": "==Contexto (texto plano):\n---\n{{$json.contentText}}\n\nTipo detectado: {{$json.type || 'Vocabulary'}}\n\nInstrucciones (según el tipo):\n{{$json.type === 'Grammar'\n  ? `- Genera 10–20 tarjetas de GRAMMAR sobre el tema del contexto.\n- Incluye variedad: forma afirmativa/negativa/interrogativa, 3rd person -s, adverbs of frequency,\n  al menos 2 tarjetas tipo cloze [blank], y 2 \"errores comunes\" con su corrección.\n- Nivel objetivo: B1 (intermedio, claro para hispanohablantes).\n- \"front\": en inglés (título breve o consigna); \"back\": explicación breve en español + 1 ejemplo en inglés.\n- \"type\": \"Grammar\".\n- \"tags\": 1–3 etiquetas útiles (p. ej., [\"Simple Present\",\"Negative\"]).\n- Mantén coherencia con el texto dado; no inventes contenidos fuera de tema.`\n  : `- Genera 15–25 tarjetas de VOCABULARIO relevantes al contexto.\n- Para cada tarjeta: palabra/expresión (front), breve definición en español (back),\n  1–2 sinónimos si aplica, 1 antónimo si aplica, y 2 ejemplos en inglés (uno con [blank]).\n  Si aplica, añade collocations o phrasal verb en la definición/ejemplos.\n- Nivel objetivo: B1.\n- \"type\": \"Vocabulary\".\n- \"tags\": 1–3 etiquetas (p. ej., [\"verb\",\"routine\"]).\n- Mantén coherencia con el texto dado; no inventes contenidos fuera de tema.`}}\n\nFormato JSON ESTRICTO a devolver (no incluyas este comentario en la salida):\n{\n  \"cards\": [\n    {\"front\":\"...\", \"back\":\"...\", \"type\":\"{{$json.type || 'Vocabulary'}}\", \"tags\":[\"...\"], \"difficulty\": 2}\n  ]\n}\nNO agregues nada fuera del JSON. NO uses ``` ni Markdown.\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        -144
+      ],
+      "id": "51e7c224-c972-4715-89ea-998ca0a4c068",
+      "name": "Generador de Flashcards"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 21
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1680,
+        -64
+      ],
+      "id": "d37f8a58-499f-41f5-aed1-025ed507aa3e",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Obtener contenido de notas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Campos base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Parse & Normalize1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Normalize1": {
+      "main": [
+        [
+          {
+            "node": "añadir Stage y NextReview1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "añadir Stage y NextReview1": {
+      "main": [
+        [
+          {
+            "node": "Create a database page1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update a database page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a database page1": {
+      "main": [
+        [
+          {
+            "node": "Replace Me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplanar bloques de Notion": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Campos base": {
+      "main": [
+        [
+          {
+            "node": "Generador de Flashcards",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener notas elegibles": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener contenido de notas": {
+      "main": [
+        [
+          {
+            "node": "Aplanar bloques de Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generador de Flashcards": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Obtener notas elegibles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "e3abe781-619f-4e83-a251-b7b0d430ec6f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ac5af04c09a57931e37d27cd5592d371bb8a6f4303f86335c7102b0665e94c06"
+  },
+  "id": "Vm4eZP0ydPuVO1Vc",
+  "tags": [
+    {
+      "name": "Platzi",
+      "id": "IdDEnKMa2Cr0MHUI",
+      "createdAt": "2025-09-29T21:50:55.497Z",
+      "updatedAt": "2025-09-29T21:50:55.497Z"
+    }
+  ]
+}

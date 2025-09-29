@@ -1,0 +1,309 @@
+{
+  "name": "Recordatorios - Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_FLASHCARDS_DATABASE_ID",
+          "mode": "list",
+          "cachedResultName": "Flashcards",
+          "cachedResultUrl": ""
+        },
+        "returnAll": true,
+        "filterType": "json",
+        "filterJson": "={\n  \"and\": [\n    {\n      \"property\": \"Completed\",\n      \"checkbox\": { \"equals\": false }\n    },\n    {\n      \"property\": \"Next Review Date\",\n      \"date\": {\n        \"on_or_after\": \"{{$json.startWindow}}\",\n        \"on_or_before\": \"{{$json.endWindow}}\"\n      }\n    }\n  ]\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -1312,
+        32
+      ],
+      "id": "8ba3b730-d6f6-44f0-ab44-0aad5efaa200",
+      "name": "Get a database page"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lee todos los items entrantes (cada uno es una página de Notion)\n// y construye un agregado por \"property_type\" + total.\n// Devuelve UN SOLO item con los campos:\n//   total, countsByType (objeto), types (array ordenada), todayLocal, summaryMessage\n\nconst itemsIn = items;\n\n// Conteo por Type\nconst counts = {};\nlet total = 0;\n\nfor (const it of itemsIn) {\n  const t = (it.json.property_type || 'Unknown').trim();\n  counts[t] = (counts[t] || 0) + 1;\n  total += 1;\n}\n\n// Ordenar tipos por mayor a menor\nconst typesSorted = Object.entries(counts)\n  .sort((a, b) => b[1] - a[1])\n  .map(([k]) => k);\n\n// Construir frase \"X de Vocabulary, Y de Grammar, Z de ...\"\nfunction joinCounts(countsObj) {\n  const parts = Object.entries(countsObj)\n    .sort((a, b) => b[1] - a[1])\n    .map(([k, v]) => `${v} de ${k}`);\n  if (parts.length === 0) return '';\n  if (parts.length === 1) return parts[0];\n  // unimos con comas y “y” final\n  return parts.slice(0, -1).join(', ') + ' y ' + parts.slice(-1)[0];\n}\n\n// Fecha local del día (si vienes del Nodo 2 por otra rama puedes copiar todayLocal ahí;\n// aquí la recalculamos de forma simple)\nconst now = new Date();\nconst y = now.getFullYear();\nconst m = String(now.getMonth() + 1).padStart(2, '0');\nconst d = String(now.getDate()).padStart(2, '0');\nconst todayLocal = `${y}-${m}-${d}`;\n\n// Mensaje resumen (si no hay tarjetas, mensaje distinto)\nlet summaryMessage;\nif (total === 0) {\n  summaryMessage = `Hoy (${todayLocal}) no tienes flashcards programadas. 🎉`;\n} else {\n  const byTypeStr = joinCounts(counts);\n  summaryMessage = `Hoy (${todayLocal}) te toca estudiar ${byTypeStr} (total: ${total}). 💪📚`;\n}\n\nreturn [\n  {\n    json: {\n      total,\n      countsByType: counts,\n      types: typesSorted,\n      todayLocal,\n      summaryMessage\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1088,
+        -144
+      ],
+      "id": "780f9d74-1cb1-416e-8267-9a2d3d81d050",
+      "name": "Compute & collect"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construye los límites horarios de hoy 21:00 y 22:00 en America/La_Paz (UTC-04:00)\n// Devuelve un solo item con startWindow y endWindow en ISO con offset -04:00\n\nfunction pad(n) { return String(n).padStart(2, '0'); }\n\n// Fecha \"hoy\" en la zona local del servidor; solo usamos Y-M-D para componer ISO con -04:00\nconst now = new Date();\nconst y = now.getFullYear();\nconst m = pad(now.getMonth() + 1);\nconst d = pad(now.getDate());\n\n// Importante: Bolivia no maneja DST; offset fijo -04:00\nconst offset = '-04:00';\n\nconst startWindow = `${y}-${m}-${d}T21:00:00.000${offset}`;\nconst endWindow   = `${y}-${m}-${d}T22:00:00.000${offset}`;\n\nreturn [\n  {\n    json: {\n      startWindow,\n      endWindow,\n      // Útil para logs o tags del día\n      todayLocal: `${y}-${m}-${d}`,\n      timezone: 'America/La_Paz',\n      offset\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        32
+      ],
+      "id": "50802265-736d-45b0-b8e0-c42577b70887",
+      "name": "Build Window 21–22 La Paz"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1088,
+        144
+      ],
+      "id": "c0ed4c70-fb1f-42ba-bfe9-faee149ea858",
+      "name": "Loop — Each Flashcard."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada: item actual del Loop (con simplify=true desde Notion)\n// Salida: UN item con { pageId, newStage, newNextDate, newCompleted }\n\nfunction addDaysPreservingTimeAndOffset(isoString, daysToAdd) {\n  // isoString ej: \"2025-09-29T21:30:00.000-04:00\"\n  // Extrae fecha, hora y offset:\n  const m = isoString.match(/^(\\d{4}-\\d{2}-\\d{2})T(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})([+-]\\d{2}:\\d{2}|Z)$/);\n  if (!m) {\n    // Fallback: usar Date nativa y retornar en ISO Z\n    const dt = new Date(isoString);\n    dt.setDate(dt.getDate() + daysToAdd);\n    return dt.toISOString();\n  }\n  const [_, ymd, hms, offset] = m;\n\n  // Crear Date en base a isoString para sumar días correctamente\n  const base = new Date(isoString);\n  base.setDate(base.getDate() + daysToAdd);\n\n  const y = base.getFullYear();\n  const mon = String(base.getMonth() + 1).padStart(2, '0');\n  const d = String(base.getDate()).padStart(2, '0');\n\n  // Preservamos la HORA original (hms) y el OFFSET original\n  const newIso = `${y}-${mon}-${d}T${hms}${offset}`;\n  return newIso;\n}\n\nconst it = items[0].json;\n\nconst pageId = it.id || it.pageId || it.page_id; // por si cambia el nombre\nconst stage = Number(it.property_stage ?? 0);\nconst nextDate = it.property_next_review_date?.start;\n\nlet newStage = stage;\nlet newNextDate = nextDate || null;\nlet newCompleted = false;\n\nif (stage === 0) {\n  newStage = 1;\n  newNextDate = addDaysPreservingTimeAndOffset(nextDate, 3);\n} else if (stage === 1) {\n  newStage = 2;\n  newNextDate = addDaysPreservingTimeAndOffset(nextDate, 7);\n} else if (stage === 2) {\n  newStage = 3;\n  newNextDate = addDaysPreservingTimeAndOffset(nextDate, 14);\n} else if (stage === 3) {\n  newStage = 3;\n  newCompleted = true;\n  // Puedes decidir si mantener Next Review Date igual o setear null.\n  // Aquí lo dejamos igual, solo marcamos Completed.\n}\n\nreturn [\n  {\n    json: {\n      pageId,\n      newStage,\n      newNextDate,\n      newCompleted\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -784,
+        112
+      ],
+      "id": "702e1a82-767b-421b-86d5-6f29e9e61838",
+      "name": "Compute Update (Stage & Date)"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $json.pageId }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Stage|number",
+              "numberValue": "={{ $json.newStage }}"
+            },
+            {
+              "key": "Next Review Date|date",
+              "date": "={{ $json.newNextDate }}",
+              "timezone": "America/La_Paz"
+            },
+            {
+              "key": "Completed|checkbox",
+              "checkboxValue": "={{ $json.newCompleted }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        -544,
+        144
+      ],
+      "id": "3dd9360c-ecbb-4c70-b5b5-9e2d43409384",
+      "name": "Update a database page"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.summaryMessage }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_notification": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -640,
+        -160
+      ],
+      "id": "9727a88f-11aa-4772-968b-39b761ca3662",
+      "name": "Daily Summary.",
+      "webhookId": "0cae769a-d506-4edf-a277-7858ef1fbffa"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5855397b-b26d-4977-81ec-88fc057e918a",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -864,
+        -144
+      ],
+      "id": "bd7da924-d651-438b-b4c9-3317799aace8",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 21
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1712,
+        48
+      ],
+      "id": "8420f876-37b5-4865-985f-1a6107d9e12e",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get a database page": {
+      "main": [
+        [
+          {
+            "node": "Loop — Each Flashcard.",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Compute & collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute & collect": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Window 21–22 La Paz": {
+      "main": [
+        [
+          {
+            "node": "Get a database page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop — Each Flashcard.": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Compute Update (Stage & Date)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Update (Stage & Date)": {
+      "main": [
+        [
+          {
+            "node": "Update a database page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a database page": {
+      "main": [
+        [
+          {
+            "node": "Loop — Each Flashcard.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Daily Summary.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Window 21–22 La Paz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6934864e-6182-47f9-af01-80d8afcc2e01",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ac5af04c09a57931e37d27cd5592d371bb8a6f4303f86335c7102b0665e94c06"
+  },
+  "id": "G867PJqDSFLn5XBi",
+  "tags": [
+    {
+      "name": "Platzi",
+      "id": "IdDEnKMa2Cr0MHUI",
+      "createdAt": "2025-09-29T21:50:55.497Z",
+      "updatedAt": "2025-09-29T21:50:55.497Z"
+    }
+  ]
+}
