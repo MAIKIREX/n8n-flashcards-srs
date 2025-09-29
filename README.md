@@ -1,7 +1,5 @@
 # Automate your learning: de Notion a Flashcards con IA + recordatorios SRS en Telegram (n8n)
 
-> Proyecto listo para participar en la **Iniciativa de Licencias n8n para la Comunidad Platzi**.  
-> Incluye **2 flujos** (JSON) + guía paso a paso para que cualquiera lo reutilice.  
 > **Diseñado para tomar apuntes de *inglés* de los cursos de Platzi (o de otras fuentes)** y convertirlos en flashcards con repaso espaciado. *También es adaptable a cualquier otra materia.*
 
 ---
@@ -142,21 +140,6 @@ CRON_MINUTE="00"
   `https://<tu_enlace_publico>/generador-flashcards-notion.json`
 - **Recordatorios Telegram (SRS) (JSON):**  
   `https://<tu_enlace_publico>/recordatorios-telegram-srs.json`
-
----
-
-## 🧪 Evidencia (recomendado)
-- 1–2 **capturas** del flujo ejecutándose (n8n).
-- 1 captura de **Flashcards creadas** en Notion.
-- 1 captura del **mensaje de Telegram** con el resumen del día.
-
----
-
-## 🔧 Buenas prácticas
-- **Idempotencia**: marca `Processed` en Notas; evita duplicados en Flashcards.
-- **Errores/rate limits**: activa **retry on fail** (2–3 intentos) en Notion y Telegram.
-- **Parámetros**: usa variables para IDs y horarios; facilita la reutilización.
-- **Métricas** (opcional): guarda un log diario (fecha, total por Type, completadas Stage 3).
 
 ---
 
